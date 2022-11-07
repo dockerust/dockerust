@@ -1,16 +1,13 @@
 use crate::container::container;
 use clap::Parser;
-use std::process;
-use tracing::info;
+use std::process::exit;
+use tracing::{error, info};
 
 #[derive(Parser, Debug)]
 pub struct Run {
     /// Allocate a pseudo-TTY
     #[arg(short, long)]
     tty: bool,
-    /// Keep STDIN open even if not attached
-    #[arg(short, long)]
-    interactive: bool,
     /// name of the container instance
     image: String,
 }
@@ -18,7 +15,15 @@ pub struct Run {
 impl Run {
     pub fn exec(&self) {
         info!("{:?}", self);
-        container::new_parent_process(self.tty && self.interactive, &self.image);
-        process::exit(-1);
+        let parent = container::new_parent_process(self.tty, &self.image);
+        let mut child = match parent.borrow_mut().spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                error!("Failed to spawn child process: {}", e);
+                exit(-1);
+            }
+        };
+        child.wait().expect("Failed to wait child process");
+        exit(-1);
     }
 }

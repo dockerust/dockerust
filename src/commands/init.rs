@@ -1,3 +1,4 @@
+use crate::container::container;
 use clap::Parser;
 use tracing::info;
 
@@ -9,5 +10,6 @@ pub struct Init {
 impl Init {
     pub fn exec(&self) {
         info!("{:?}", self);
+        container::run_container_init_process(&self.image).expect("Failed to run container");
     }
 }

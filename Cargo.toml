@@ -10,3 +10,4 @@ clap = {version = "4.0.18", features = ["derive"]}
 tracing = "0.1.37"
 tracing-subscriber = "0.3.16"
 nix = "0.25.0"
+unshare = "0.7.0"
