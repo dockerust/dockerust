@@ -1,17 +1,18 @@
-use nix::errno::Errno;
-use nix::{mount, unistd};
 use std::cell::RefCell;
 use std::ffi::CString;
-use std::process::Command;
+use std::{fs::File, io::Read, os::unix::io::FromRawFd};
+
+use nix::errno::Errno;
+use nix::{mount, unistd};
 use tracing::info;
 
 pub struct Container {}
 
 /// equivalent to `dokerust init [image]`
 /// fork a new process with a new namespace
-pub fn new_parent_process(tty: bool, image: &str) -> RefCell<unshare::Command> {
+pub fn new_parent_process(tty: bool) -> RefCell<unshare::Command> {
     let mut cmd = unshare::Command::new("/proc/self/exe");
-    cmd.args(&["init", image]);
+    cmd.args(&["init"]);
     let namespaces = vec![
         unshare::Namespace::Net,
         unshare::Namespace::Uts,
@@ -28,11 +29,28 @@ pub fn new_parent_process(tty: bool, image: &str) -> RefCell<unshare::Command> {
             .stderr(unshare::Stdio::inherit());
     }
 
+    // let (reader, writer) = pipe().unwrap();
+
+    cmd.file_descriptor(3, unshare::Fd::ReadPipe);
+
     return RefCell::new(cmd);
 }
 
+fn read_user_command() -> Result<Vec<String>, Errno> {
+    let mut f = unsafe { File::from_raw_fd(3) };
+    let mut input = String::new();
+    f.read_to_string(&mut input)
+        .expect("Failed to read from pipe");
+    let cmd_array = input.split_whitespace().map(|s| s.to_string()).collect();
+    Ok(cmd_array)
+}
+
 /// mount a proc fs
-pub fn run_container_init_process(cmd: &str) -> Result<(), Errno> {
+pub fn run_container_init_process() -> Result<(), Errno> {
+    let cmd_array = read_user_command().unwrap();
+    info!("commands: {:?}", cmd_array);
+    assert!(cmd_array.len() >= 1);
+
     let mount_flags =
         mount::MsFlags::MS_NOEXEC | mount::MsFlags::MS_NOSUID | mount::MsFlags::MS_NODEV;
 
@@ -47,15 +65,12 @@ pub fn run_container_init_process(cmd: &str) -> Result<(), Errno> {
 
     info!("Mount procfs to /proc");
 
-    let output = Command::new("ps")
-        .args(["-ef"])
-        .output()
-        .expect("Failed to execute ps");
-    info!("ps -ef: {}", String::from_utf8_lossy(&output.stdout));
+    let args = cmd_array
+        .into_iter()
+        .map(|s| CString::new(s).unwrap())
+        .collect::<Vec<_>>();
 
-    let args = [&CString::new(cmd).unwrap()];
-
-    unistd::execv(args[0], &args)?;
+    unistd::execv(&args[0], &args)?;
 
     Ok({})
 }

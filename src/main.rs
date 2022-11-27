@@ -1,6 +1,5 @@
 use clap::{Parser, Subcommand};
-use dockerust::commands::init::Init;
-use dockerust::commands::run::Run;
+use dockerust::commands::{create, delete, init, kill, query, run, start};
 use tracing_subscriber;
 
 #[derive(Parser, Debug)]
@@ -13,19 +12,31 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum SubCommand {
-    /// Create a container with namespace and cgroups limit dockerust run -ti [command]
-    Run(Run),
+    Query(query::Query),
+    Create(create::Create),
+    Start(start::Start),
+    Kill(kill::Kill),
+    Delete(delete::Delete),
+    /// Create a container with namespace and cgroups limit dockerust run -t [command]
+    Run(run::Run),
     /// Init container process run user's process in container. Internal command, don't call it outside.
     #[command(hide = true)]
-    Init(Init),
+    Init(init::Init),
 }
 
 fn main() {
     let cli: Cli = Cli::parse();
     tracing_subscriber::fmt::init();
 
-    match cli.subcmd {
-        SubCommand::Run(run) => run.exec(),
-        SubCommand::Init(init) => init.exec(),
-    };
+    unsafe {
+        match cli.subcmd {
+            SubCommand::Query(query) => query.exec(),
+            SubCommand::Create(create) => create.exec(),
+            SubCommand::Start(start) => start.exec(),
+            SubCommand::Kill(kill) => kill.exec(),
+            SubCommand::Delete(delete) => delete.exec(),
+            SubCommand::Run(run) => run.exec(),
+            SubCommand::Init(init) => init.exec(),
+        };
+    }
 }
