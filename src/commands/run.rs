@@ -1,6 +1,8 @@
 use crate::container::container;
+use crate::volume::volume::delete_workspace;
 use clap::Parser;
 use std::io::Write;
+use std::path::Path;
 use std::process::exit;
 use tracing::{error, info};
 
@@ -9,6 +11,8 @@ pub struct Run {
     /// Allocate a pseudo-TTY
     #[arg(short, long)]
     tty: bool,
+    /// image name
+    image: String,
     /// name of the container instance
     commands: Vec<String>,
 }
@@ -16,7 +20,7 @@ pub struct Run {
 impl Run {
     pub unsafe fn exec(&self) {
         info!("{:?}", self);
-        let parent = container::new_parent_process(self.tty.clone());
+        let parent = container::new_parent_process(self.tty.clone(), &self.image);
         let mut child = match parent.borrow_mut().spawn() {
             Ok(child) => child,
             Err(e) => {
@@ -38,5 +42,11 @@ impl Run {
         drop(writer);
 
         child.wait().expect("Failed to wait child process");
+
+        let mnt_url = Path::new("/dockerust/mnt");
+        let root_url = Path::new("/dockerust");
+        delete_workspace(root_url, mnt_url);
+
+        info!("container stopped");
     }
 }

@@ -17,7 +17,7 @@ enum SubCommand {
     Start(start::Start),
     Kill(kill::Kill),
     Delete(delete::Delete),
-    /// Create a container with namespace and cgroups limit dockerust run -t [command]
+    /// Create a container with namespace and cgroups limit dockerust run -t [image] [commands]
     Run(run::Run),
     /// Init container process run user's process in container. Internal command, don't call it outside.
     #[command(hide = true)]
