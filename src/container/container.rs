@@ -1,16 +1,19 @@
+use crate::volume::volume::new_workspace;
+use nix::errno::Errno;
+use nix::mount::{mount, umount2, MntFlags, MsFlags};
+use nix::unistd::{chdir, execv, pivot_root};
+use resolve_path::PathResolveExt;
 use std::cell::RefCell;
 use std::ffi::CString;
-use std::{fs::File, io::Read, os::unix::io::FromRawFd};
-
-use nix::errno::Errno;
-use nix::{mount, unistd};
+use std::path::Path;
+use std::{fs, fs::File, io::Read, os::unix::io::FromRawFd};
 use tracing::info;
 
 pub struct Container {}
 
 /// equivalent to `dokerust init [image]`
 /// fork a new process with a new namespace
-pub fn new_parent_process(tty: bool) -> RefCell<unshare::Command> {
+pub fn new_parent_process(tty: bool, image: &str) -> RefCell<unshare::Command> {
     let mut cmd = unshare::Command::new("/proc/self/exe");
     cmd.args(&["init"]);
     let namespaces = vec![
@@ -29,9 +32,14 @@ pub fn new_parent_process(tty: bool) -> RefCell<unshare::Command> {
             .stderr(unshare::Stdio::inherit());
     }
 
-    // let (reader, writer) = pipe().unwrap();
-
     cmd.file_descriptor(3, unshare::Fd::ReadPipe);
+
+    // TODO: move to somewhere else
+    let mnt_url = Path::new("/dockerust/mnt");
+    let root_url = Path::new("/dockerust");
+    let img_abs_path = image.try_resolve().expect("Failed to resolve image path");
+    new_workspace(root_url, mnt_url, img_abs_path.as_ref());
+    cmd.current_dir(mnt_url);
 
     return RefCell::new(cmd);
 }
@@ -45,48 +53,105 @@ fn read_user_command() -> Result<Vec<String>, Errno> {
     Ok(cmd_array)
 }
 
-/// mount a proc fs
 pub fn run_container_init_process() -> Result<(), Errno> {
     let cmd_array = read_user_command().unwrap();
     info!("commands: {:?}", cmd_array);
-    assert!(cmd_array.len() >= 1);
+    if cmd_array.len() < 1 {
+        panic!("Please specify a command to run");
+    }
 
-    let mount_flags =
-        mount::MsFlags::MS_NOEXEC | mount::MsFlags::MS_NOSUID | mount::MsFlags::MS_NODEV;
-
-    mount::mount(
-        Some("proc"),
-        "/proc",
-        Some("proc"),
-        mount_flags,
-        None::<&str>,
-    )
-    .expect("Failed to mount proc");
-
-    info!("Mount procfs to /proc");
+    setup_mount();
 
     let args = cmd_array
         .into_iter()
         .map(|s| CString::new(s).unwrap())
         .collect::<Vec<_>>();
 
-    unistd::execv(&args[0], &args)?;
+    execv(&args[0], &args)?;
+
+    info!("execv success");
 
     Ok({})
 }
 
-pub fn mount_proc() {
-    let mount_flags =
-        mount::MsFlags::MS_NOEXEC | mount::MsFlags::MS_NOSUID | mount::MsFlags::MS_NODEV;
+fn setup_mount() {
+    let pwd = std::env::current_dir().unwrap();
+    info!("pwd: {:?}", pwd);
+    mount_rootfs(pwd.as_path());
+    pivot_rootfs(pwd.as_path());
+    mount_procfs();
+    mount_tmpfs();
+}
 
-    mount::mount(
+fn mount_rootfs(rootfs: &Path) {
+    /* https://man7.org/linux/man-pages/man2/pivot_root.2.html
+    Ensure that 'new_root' and its parent mount don't have
+    shared propagation (which would cause pivot_root() to
+    return an error), and prevent propagation of mount
+    events to the initial mount namespace.
+     */
+    mount(
+        None::<&str>,
+        "/",
+        None::<&str>,
+        MsFlags::MS_PRIVATE | MsFlags::MS_REC,
+        None::<&str>,
+    )
+    .expect("disable propagation of mount events failed");
+
+    mount::<Path, Path, str, str>(
+        Some(rootfs),
+        rootfs,
+        None::<&str>,
+        MsFlags::MS_BIND | MsFlags::MS_REC,
+        None::<&str>,
+    )
+    .expect("mount rootfs failed");
+}
+
+fn pivot_rootfs(rootfs: &Path) {
+    fs::create_dir_all(rootfs.join("pivot_root")).expect("Failed to create pivot_root dir");
+
+    pivot_root(rootfs.as_os_str(), rootfs.join("pivot_root").as_os_str())
+        .expect("Failed to pivot root");
+
+    chdir("/").expect("Failed to chdir to root");
+
+    umount2(
+        Path::new("/").join("pivot_root").as_os_str(),
+        MntFlags::MNT_DETACH,
+    )
+    .expect("Failed to umount pivot_root dir");
+
+    fs::remove_dir_all(Path::new("/").join("pivot_root")).expect("Failed to remove pivot_root dir");
+
+    chdir("/").expect("Failed to chdir to root");
+
+    info!("Pivot rootfs success");
+}
+
+fn mount_procfs() {
+    mount(
         Some("proc"),
         "/proc",
         Some("proc"),
-        mount_flags,
+        MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
         None::<&str>,
     )
     .expect("Failed to mount proc");
 
-    info!("Mount procfs to /proc");
+    info!("Mount procfs success");
+}
+
+fn mount_tmpfs() {
+    mount(
+        Some("tmpfs"),
+        "/dev",
+        Some("tmpfs"),
+        MsFlags::MS_NOSUID | MsFlags::MS_STRICTATIME,
+        Some("mode=755"),
+    )
+    .expect("Failed to mount tmpfs");
+
+    info!("Mount tmpfs success");
 }
