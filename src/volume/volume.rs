@@ -5,6 +5,21 @@ use std::process::Command;
 use tracing::info;
 
 pub fn new_workspace(root_url: &Path, mnt_url: &Path, image_url: &Path) {
+    fs::create_dir_all(&root_url).expect("Failed to create lower dir");
+    let output = Command::new("mount")
+        .arg("-t")
+        .arg("tmpfs")
+        .arg("tmpfs")
+        .arg(format!(
+            "{}",
+            root_url.to_str().unwrap(),
+        ))
+        .output()
+        .expect("Failed to mount overlay");
+    if !output.status.success() {
+        output.stderr.iter().for_each(|&b| print!("{}", b as char));
+        panic!("Failed to mount tmpfs");
+    }
     create_lower_dir(root_url, image_url);
     create_upper_dir(root_url);
     create_work_layer(root_url);
@@ -64,5 +79,6 @@ fn create_mount_point(root_path: &Path, mnt_path: &Path) {
 //TODO
 pub fn delete_workspace(root_url: &Path, mnt_url: &Path) {
     umount(mnt_url).expect("Failed to umount");
+    umount(root_url).expect("Failed to umount root");
     fs::remove_dir_all(root_url).expect("Failed to remove mount point");
 }

@@ -1,5 +1,6 @@
 use crate::container::container;
 use crate::volume::volume::delete_workspace;
+use crate::network::network;
 use clap::Parser;
 use std::io::Write;
 use std::path::Path;
@@ -41,11 +42,15 @@ impl Run {
         // explicitly close the writer
         drop(writer);
 
+        network::bridge(child.id());
+
         child.wait().expect("Failed to wait child process");
 
         let mnt_url = Path::new("/dockerust/mnt");
         let root_url = Path::new("/dockerust");
         delete_workspace(root_url, mnt_url);
+
+        network::delete_bridge();
 
         info!("container stopped");
     }
